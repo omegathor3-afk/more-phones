@@ -176,7 +176,7 @@ private object MoreLoginApi {
         power(c, id, true)
         repeat(45) {
             val phone = list(c).firstOrNull { it.id == id }
-            if (phone?.status == 4) return phone
+            if (phone != null && phone.status == 4) return phone
             if (phone?.status == 1 || phone?.status == 2) throw IllegalStateException("تعذر تشغيل الهاتف.")
             delay(2000)
         }
@@ -221,7 +221,9 @@ private fun MorePhonesApp() {
         task {
             val current = MoreLoginApi.list(c)
             phones = current
-            val name = "Android " + (current.size + 1)
+            var nextNumber = current.size + 1
+            while (current.any { it.name == "Android " + nextNumber }) nextNumber++
+            val name = "Android " + nextNumber
             notice = "جارٍ إنشاء " + name + "..."
             val created = MoreLoginApi.createAndStart(c, name)
             phones = MoreLoginApi.list(c)
