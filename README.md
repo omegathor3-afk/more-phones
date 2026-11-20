@@ -1,26 +1,31 @@
-# MORE PHONES — Local + Cloud Device Lab
+# MORE PHONES — Cloud Android fleet
 
-MORE PHONES is an Android-first organizer for local APK workspaces and externally hosted Android sessions.
+MORE PHONES 0.4.0 integrates with MoreLogin Cloud Phone Open API.
 
-## Build 0.3.0
-- Create and delete multiple local file workspaces, each with its own app-private APK vault.
-- Import APK files into a selected workspace using Android's document picker.
-- Save HTTPS links to externally hosted Android sessions and open them through Android.
-- Workspace metadata is stored locally in SharedPreferences; APK copies are stored under app-private files.
-- No account, analytics, or backend credentials are collected.
+## This build
+- Connects to the user's MoreLogin account using API ID and API Key.
+- Encrypts API credentials at rest with Android Keystore (AES-GCM).
+- Lists real cloud Android devices from the provider.
+- Creates one independent Android 12 cloud phone per new space.
+- Optionally binds a distinct SOCKS5 proxy to each phone.
+- Starts and stops each phone independently.
+- Requests a short-lived (5-minute) remote-control browser link for a running phone.
+- Shows the provider-reported egress IP when available.
 
-## Important capability boundaries
-A local workspace is an isolated file vault, NOT a virtual Android operating system. APKs copied into it are not installed or executed inside a separate Android guest. Android's normal app sandbox prevents an ordinary app from silently creating independent Android users/profiles or installing apps into them.
+## Requirements and limitations
+- A MoreLogin account and Open API credentials are required. In MoreLogin, open Settings → API & MCP to obtain API ID and API Key.
+- Cloud phone creation/start is subject to account quota, concurrency, balance, provisioning and provider policies. Starting a pay-per-minute phone consumes provider balance/minutes.
+- MoreLogin support guidance says cloud phones require a usable SOCKS5 proxy to start. Configure a different proxy endpoint per device for distinct egress IPs. A VPN app can also be installed inside each cloud Android; use a separate VPN exit endpoint per device if unique public IPs are required.
+- The app does not provide VPN subscriptions, proxy servers, cloud compute, or free device capacity.
+- New devices are provisioned asynchronously. Refresh the list and wait for the provider to report them ready before starting.
+- Remote-control URLs are temporary and confidential; the provider documents a five-minute validity period.
+- The app does not bypass app anti-fraud systems or falsify device/network identity.
 
-The Android Virtualization Framework APIs were introduced in API 34 and are restricted system APIs requiring MANAGE_VIRTUAL_MACHINE; they are not a general-purpose option for third-party apps on Android 12. See https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md
+## Installing apps
+Each cloud phone is a normal remote Android environment. Open its remote-control session and install apps inside Android through its browser/app store or the provider's supported app workflow. This build does not silently install arbitrary APKs into a remote device.
 
-Cloud links are connection bookmarks only. They do not provision cloud devices. A real cloud Android service, account/project, authorization and possibly paid usage are required. Google's Device Streaming is a developer device-testing service with remote physical devices, not an always-on personal fleet; sessions are wiped when returned. See https://developer.android.com/studio/run/android-device-streaming
-
-## Privacy
-- No INTERNET permission is declared.
-- APK selection is user-initiated through Android's Storage Access Framework.
-- APKs are copied into the app's private storage.
-- Cloud URLs are opened by the Android browser; no passwords or tokens are collected by this app.
+## Credential security
+API ID and API Key are encrypted on-device using Android Keystore. This avoids plaintext preferences, but credentials are still used by the app on the user's device. Use a dedicated MoreLogin API key and revoke it from MoreLogin if the device is lost.
 
 ## Build
-GitHub Actions builds a debug APK on every push to main.
+GitHub Actions builds a debug APK on pushes to main.
