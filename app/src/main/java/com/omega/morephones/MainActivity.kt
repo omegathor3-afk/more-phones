@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -157,21 +158,29 @@ private object MoreLoginApi {
         }.filter { it.id.isNotBlank() }
     }
 
-    suspend fun create(c: Pair<String, String>, name: String, host: String, port: Int, user: String, pass: String): String {
+    suspend fun createAndStart(c: Pair<String, String>, name: String): CloudPhone {
         val body = JSONObject().put("skuId", "10002").put("quantity", 1).put("envRemark", name)
             .put("automaticGeo", true).put("automaticLanguage", true).put("automaticLocation", true)
         val result = call(c, "POST", "/cloudphone/create", body)
         val ids = result.optJSONArray("data") ?: JSONArray()
-        if (ids.length() == 0) throw IllegalStateException("المزود لم يرجع رقم الهاتف")
+        if (ids.length() == 0) throw IllegalStateException("MoreLogin لم يُرجع رقم الهاتف.")
         val id = ids.getString(0)
-        if (host.isNotBlank() && port in 1..65535) {
-            val proxy = JSONObject().put("proxyIp", host).put("proxyPort", port)
-                .put("proxyProvider", 2).put("proxyName", "MORE PHONES - " + name)
-            if (user.isNotBlank()) proxy.put("username", user)
-            if (pass.isNotBlank()) proxy.put("password", pass)
-            call(c, "POST", "/cloudphone/setProxy", JSONObject().put("ids", JSONArray().put(id)).put("proxy", proxy))
+        var ready = false
+        repeat(30) {
+            val phone = list(c).firstOrNull { it.id == id }
+            if (phone?.status == 2) ready = true
+            if (phone?.status == 1) throw IllegalStateException("فشل إنشاء الهاتف داخل MoreLogin.")
+            if (!ready) delay(2000)
         }
-        return id
+        if (!ready) throw IllegalStateException("تم إرسال طلب الإنشاء لكن الهاتف لم يصبح جاهزًا بعد. حدّث القائمة بعد قليل.")
+        power(c, id, true)
+        repeat(45) {
+            val phone = list(c).firstOrNull { it.id == id }
+            if (phone?.status == 4) return phone
+            if (phone?.status == 1 || phone?.status == 2) throw IllegalStateException("تعذر تشغيل الهاتف.")
+            delay(2000)
+        }
+        throw IllegalStateException("الهاتف أُنشئ وأُرسل أمر تشغيله، لكنه ما زال يقلع. حدّث القائمة بعد قليل.")
     }
 
     suspend fun power(c: Pair<String, String>, id: String, on: Boolean) {
@@ -192,16 +201,10 @@ private fun MorePhonesApp() {
     var credentials by remember { mutableStateOf(SecureStore.load(context)) }
     var phones by remember { mutableStateOf<List<CloudPhone>>(emptyList()) }
     var showSettings by remember { mutableStateOf(credentials == null) }
-    var showCreate by remember { mutableStateOf(false) }
     var apiId by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
-    var phoneName by remember { mutableStateOf("") }
-    var proxyHost by remember { mutableStateOf("") }
-    var proxyPort by remember { mutableStateOf("1080") }
-    var proxyUser by remember { mutableStateOf("") }
-    var proxyPass by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf("اربط حساب MoreLogin لإنشاء هواتف Android سحابية حقيقية.") }
+    var notice by remember { mutableStateOf("اضغط إنشاء هاتف جديد. سيتم إنشاؤه وتشغيله تلقائيًا.") }
 
     fun task(block: suspend () -> Unit) {
         if (busy) return
@@ -209,6 +212,23 @@ private fun MorePhonesApp() {
         scope.launch {
             try { block() } catch (e: Exception) { notice = e.message ?: "حدث خطأ" }
             finally { busy = false }
+        }
+    }
+
+    fun createPhone() {
+        val c = credentials ?: run { showSettings = true; return }
+        if (busy) return
+        task {
+            val current = MoreLoginApi.list(c)
+            phones = current
+            val name = "Android " + (current.size + 1)
+            notice = "جارٍ إنشاء " + name + "..."
+            val created = MoreLoginApi.createAndStart(c, name)
+            phones = MoreLoginApi.list(c)
+            notice = name + " جاهز. جاري فتح شاشة Android..."
+            val url = MoreLoginApi.link(c, created.id)
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            notice = name + " يعمل بشكل مستقل وتم فتح شاشة التحكم."
         }
     }
 
@@ -245,9 +265,9 @@ private fun MorePhonesApp() {
                                         Text("REMOTE CLOUD DEVICES", color = Gold, fontSize = 9.sp)
                                     }
                                 }
-                                Text("كل مساحة تنشئ جهاز Android سحابيًا منفصلًا ببياناته وتطبيقاته. افتح شاشة الجهاز وتحكم فيه من هاتفك.", color = Color(0xFFD1E0EC), fontSize = 12.sp, lineHeight = 19.sp)
+                                Text("أنشئ هواتف Android مستقلة. كل هاتف له تطبيقاته وبياناته الخاصة، ويمكنك فتحه وإدارته منفردًا.", color = Color(0xFFD1E0EC), fontSize = 12.sp, lineHeight = 19.sp)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    AssistChip(onClick = { showCreate = true }, enabled = credentials != null && !busy, label = { Text("إنشاء هاتف Android") }, leadingIcon = { Icon(Icons.Default.Add, null) })
+                                    AssistChip(onClick = { createPhone() }, enabled = credentials != null && !busy, label = { Text("＋ هاتف جديد بضغطة واحدة") }, leadingIcon = { Icon(Icons.Default.Add, null) })
                                     AssistChip(onClick = { showSettings = true }, label = { Text(if (credentials == null) "ربط الحساب" else "الحساب متصل") }, leadingIcon = { Icon(Icons.Default.Settings, null) })
                                 }
                             }
@@ -258,8 +278,8 @@ private fun MorePhonesApp() {
                 if (credentials == null || phones.isEmpty()) {
                     item {
                         InfoCard(
-                            if (credentials == null) "اربط حساب MoreLogin أولًا" else "لا توجد هواتف محمّلة",
-                            if (credentials == null) "يحتاج التطبيق API ID وAPI Key من MoreLogin حتى ينشئ أنظمة Android فعلية على خوادمهم." else "اضغط تحديث لجلب أجهزتك، أو أنشئ هاتف Android جديدًا. كل جهاز مستقل عن الآخر."
+                            if (credentials == null) "الاتصال الأول مطلوب مرة واحدة" else "لا توجد هواتف بعد",
+                            if (credentials == null) "يلزم ربط حساب MoreLogin مرة واحدة حتى يستطيع التطبيق إنشاء أجهزة Android السحابية على حسابك." else "اضغط «＋ هاتف جديد بضغطة واحدة» لإنشاء هاتف وتشغيله تلقائيًا."
                         )
                     }
                 }
@@ -292,7 +312,7 @@ private fun MorePhonesApp() {
                                     task {
                                         val url = MoreLoginApi.link(credentials!!, phone.id)
                                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                        notice = "تم فتح رابط التحكم المؤقت. صلاحيته 5 دقائق."
+                                        notice = "تم فتح شاشة التحكم. رابط الاتصال مؤقت ويُنشأ من جديد عند كل فتح."
                                     }
                                 }, enabled = !busy && phone.status == 4, modifier = Modifier.weight(1f)) {
                                     Icon(Icons.Default.OpenInBrowser, null)
@@ -303,17 +323,8 @@ private fun MorePhonesApp() {
                         }
                     }
                 }
-                item {
-                    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF211E19)), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Gold.copy(alpha = .3f))) {
-                        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text("الشبكة وVPN", color = Gold, fontWeight = FontWeight.Bold)
-                            Text("يمكن تثبيت VPN داخل كل Android سحابي بشكل منفصل. للحصول على IP مختلف فعليًا، استخدم مخرج VPN أو Proxy مختلفًا لكل جهاز؛ تكرار نفس الخادم قد يعطي نفس IP.", color = Color(0xFFE4DFD4), fontSize = 11.sp, lineHeight = 17.sp)
-                            Text("MoreLogin قد يتطلب Proxy SOCKS5 صالحًا قبل تشغيل الهاتف. إدخال Proxy هنا اختياري، لكن من دونه قد يرفض المزود بدء الجهاز.", color = Muted, fontSize = 10.sp, lineHeight = 15.sp)
-                        }
-                    }
-                }
                 item { Text(if (busy) "جارٍ تنفيذ الطلب..." else notice, color = if (busy) Cyan else Muted, fontSize = 11.sp, lineHeight = 16.sp) }
-                item { Text("MORE PHONES • CLOUD BUILD 0.4.0", color = Muted, fontSize = 10.sp, letterSpacing = 1.5.sp) }
+                item { Text("MORE PHONES • ONE-TAP CLOUD ANDROID", color = Muted, fontSize = 10.sp, letterSpacing = 1.5.sp) }
             }
         }
     }
@@ -355,44 +366,7 @@ private fun MorePhonesApp() {
         }
     )
 
-    if (showCreate) AlertDialog(
-        onDismissRequest = { showCreate = false },
-        title = { Text("إنشاء هاتف Android جديد") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(phoneName, { phoneName = it }, label = { Text("اسم المساحة / الهاتف") }, singleLine = true)
-                Text("النظام: Android 12 • جهاز مستقل جديد", color = Cyan, fontSize = 11.sp)
-                Divider(color = Color(0xFF263D55))
-                Text("Proxy SOCKS5 (اختياري، وقد يكون مطلوبًا لبدء الهاتف)", color = Gold, fontSize = 11.sp)
-                OutlinedTextField(proxyHost, { proxyHost = it }, label = { Text("Proxy Host / IP") }, singleLine = true)
-                OutlinedTextField(proxyPort, { proxyPort = it }, label = { Text("Port") }, singleLine = true)
-                OutlinedTextField(proxyUser, { proxyUser = it }, label = { Text("Username (اختياري)") }, singleLine = true)
-                OutlinedTextField(proxyPass, { proxyPass = it }, label = { Text("Password (اختياري)") }, singleLine = true)
-                Text("استخدم Proxy مختلفًا لكل هاتف إذا أردت مخارج IP مختلفة. التكلفة حسب حساب MoreLogin.", color = Muted, fontSize = 10.sp)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val port = proxyPort.toIntOrNull() ?: 0
-                if (phoneName.isBlank()) notice = "اكتب اسمًا للهاتف."
-                else if (proxyHost.isNotBlank() && port !in 1..65535) notice = "رقم منفذ Proxy غير صحيح."
-                else {
-                    val name = phoneName.trim()
-                    val host = proxyHost.trim()
-                    val user = proxyUser.trim()
-                    val pass = proxyPass
-                    task {
-                        val id = MoreLoginApi.create(credentials!!, name, host, port, user, pass)
-                        phones = MoreLoginApi.list(credentials!!)
-                        notice = "أُرسل طلب إنشاء Android مستقل. رقم الجهاز: " + id + ". انتظر ظهوره بحالة متوقف قبل تشغيله."
-                        phoneName = ""; proxyHost = ""; proxyPort = "1080"; proxyUser = ""; proxyPass = ""
-                        showCreate = false
-                    }
-                }
-            }) { Text("إنشاء Android") }
-        },
-        dismissButton = { TextButton(onClick = { showCreate = false }) { Text("إلغاء") } }
-    )
+
 }
 
 @Composable
